@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+/* This ensures the background color matches your DashStack theme */
+@theme {
+  --color-dash-bg: #F5F6FA;
+}
+
+:root {
+  background-color: #F5F6FA;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
