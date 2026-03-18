@@ -15,6 +15,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
         ]);
+
+        $middleware->api(prepend: [
+            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+        ]);
+
+        // CORS configuration for API
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+            'api/paddle/webhook', // Explicitly excluded for clarity
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

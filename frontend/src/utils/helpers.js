@@ -17,7 +17,7 @@ export const getImageUrl = (item) => {
   if (path.startsWith('http')) return path;
 
   const cleanPath = path.replace(/\\/g, '');
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const baseUrl = import.meta.env.VITE_API_URL;
   const finalPath = cleanPath.startsWith('storage/') ? cleanPath : `storage/${cleanPath}`;
   
   return `${baseUrl}/${finalPath}`;

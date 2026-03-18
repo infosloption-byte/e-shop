@@ -3,23 +3,26 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
+use App\Models\Order;
 
 class OrderPlacedMail extends Mailable
 {
     use Queueable, SerializesModels;
 
+    public $order;
+    public $user;
+
     /**
      * Create a new message instance.
      */
-    public function __construct()
+    public function __construct(Order $order)
     {
-        //
+        $this->order = $order->load('items.product');
+        $this->user = $order->user;
     }
 
     /**
@@ -28,14 +31,15 @@ class OrderPlacedMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Order Placed Mail',
+            subject: 'Order Confirmation #' . $this->order->order_number,
         );
     }
 
     /**
      * Get the message content definition.
      */
-    public function content(): Content {
+    public function content(): Content
+    {
         return new Content(
             view: 'emails.orders.placed',
             with: [
@@ -48,7 +52,7 @@ class OrderPlacedMail extends Mailable
     /**
      * Get the attachments for the message.
      *
-     * @return array<int, Attachment>
+     * @return array
      */
     public function attachments(): array
     {

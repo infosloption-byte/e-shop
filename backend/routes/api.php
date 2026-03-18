@@ -2,164 +2,80 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\UserController;
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Api\AuthController;
-use App\Models\User;
-use App\Models\Order;
 
 /*
 |--------------------------------------------------------------------------
-| Public Routes (No Login Required)
+| 🌍 PUBLIC ROUTES (No Authentication Required)
 |--------------------------------------------------------------------------
 */
+
+// Authentication
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
-// --- Public Routes for Password Recovery ---
-Route::post('/forgot-password', [ProfileController::class, 'sendResetLink']);
-Route::post('/reset-password', [ProfileController::class, 'resetPassword']);
-
-// Browsing Products & Categories
-Route::get('/categories', [ProductController::class, 'listCategories']);
+// Browse Products & Categories
 Route::get('/products', [ProductController::class, 'index']);
 Route::get('/products/{id}', [ProductController::class, 'show']);
-Route::get('/products/category/{id}', [ProductController::class, 'getByCategory']);
+Route::get('/categories', [CategoryController::class, 'index']);
 
+// ⚡ PADDLE WEBHOOK - Must be PUBLIC (no auth, no CSRF)
+// This is called by Paddle servers when payment succeeds
+Route::post('paddle/webhook', [OrderController::class, 'handlePaddleWebhook']);
 
 /*
 |--------------------------------------------------------------------------
-| Protected Routes (Requires Login)
+| 🔒 PROTECTED ROUTES (Requires Authentication)
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-
-    Route::post('/logout', [AuthController::class, 'logout']);
     
-    // User Profile
+    // Auth
+    Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
 
-    // --- Profile & Security ---
-    Route::prefix('user')->group(function () {
-        // Basic Info Update (Name/Phone)
-        Route::put('/profile', [ProfileController::class, 'updateProfile']);
-        
-        // Security (Password Change)
-        Route::put('/password', [ProfileController::class, 'updatePassword']);
-        
-        // --- Address Management ---
-        Route::get('/addresses', [ProfileController::class, 'getAddresses']);
-        Route::post('/addresses', [ProfileController::class, 'addAddress']);
-        Route::put('/addresses/{id}/default', [ProfileController::class, 'setDefaultAddress']);
-        Route::delete('/addresses/{id}', [ProfileController::class, 'deleteAddress']);
-        
-        // --- Verification (Phone) ---
-        Route::post('/phone/send-otp', [ProfileController::class, 'sendPhoneOTP']);
-        Route::post('/phone/verify', [ProfileController::class, 'verifyPhoneOTP']);
-    });
-
+    // Profile Management
+    Route::put('/user/profile', [ProfileController::class, 'updateProfile']);
+    Route::put('/user/password', [ProfileController::class, 'updatePassword']);
+    
+    // User Orders
     Route::get('/user/orders', [OrderController::class, 'userOrders']);
-    Route::post('/orders', [OrderController::class, 'store']);
+    Route::post('/orders', [OrderController::class, 'store']); // Creates pending order
 
     /*
     |----------------------------------------------------------------------
-    | Admin-Only Routes (Requires Login + Admin Flag)
+    | 👑 ADMIN ROUTES
     |----------------------------------------------------------------------
     */
-    Route::middleware('admin')->group(function () {
+    Route::middleware('admin')->prefix('admin')->group(function () {
         
-        // Admin Dashboard Stats
-        Route::get('/admin/stats', function (Request $request) {
-            $range = $request->query('range', '30D');
-            
-            // 1. Basic Totals
-            $totalUsers = \App\Models\User::count();
-            $totalOrders = \App\Models\Order::count();
-            $totalSales = \App\Models\Order::where('status', '!=', 'returned')->sum('total_amount');
+        // Dashboard Stats
+        Route::get('/dashboard/stats', [OrderController::class, 'dashboardStats']);
 
-            // 2. Prepare the date range template
-            $history = [];
-            
-            if ($range === '6M') {
-                // Generate last 6 months (starting from 5 months ago to current)
-                for ($i = 5; $i >= 0; $i--) {
-                    $dateKey = now()->subMonths($i)->format('Y-m');
-                    $displayName = now()->subMonths($i)->format('M Y');
-                    $history[$dateKey] = ['name' => $displayName, 'revenue' => 0];
-                }
-
-                // Fill with real data
-                $realData = \App\Models\Order::where('status', '!=', 'returned')
-                    ->where('created_at', '>=', now()->subMonths(6))
-                    ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as date, SUM(total_amount) as total")
-                    ->groupBy('date')
-                    ->get();
-
-                foreach ($realData as $data) {
-                    if (isset($history[$data->date])) {
-                        $history[$data->date]['revenue'] = (float) $data->total;
-                    }
-                }
-            } else {
-                // Generate last 30 days
-                for ($i = 29; $i >= 0; $i--) {
-                    $dateKey = now()->subDays($i)->format('Y-m-d');
-                    $displayName = now()->subDays($i)->format('M d');
-                    $history[$dateKey] = ['name' => $displayName, 'revenue' => 0];
-                }
-
-                // Fill with real data
-                $realData = \App\Models\Order::where('status', '!=', 'returned')
-                    ->where('created_at', '>=', now()->subDays(30))
-                    ->selectRaw('DATE(created_at) as date, SUM(total_amount) as total')
-                    ->groupBy('date')
-                    ->get();
-
-                foreach ($realData as $data) {
-                    if (isset($history[$data->date])) {
-                        $history[$data->date]['revenue'] = (float) $data->total;
-                    }
-                }
-            }
-
-            return response()->json([
-                'total_users' => $totalUsers,
-                'total_orders' => $totalOrders,
-                'total_sales' => (float)$totalSales,
-                'revenue_history' => array_values($history) // Convert associative array to list
-            ]);
-        });
-
-        Route::get('/admin/users', function() {
-            // Return users with their order count to show "Customer Value"
-            return \App\Models\User::withCount('orders')->get();
-        });
-
-        Route::patch('/admin/users/{id}/role', function(Request $request, $id) {
-            $user = \App\Models\User::findOrFail($id);
-            
-            // Prevent admin from demoting themselves accidentally
-            if ($user->id === auth()->id()) {
-                return response()->json(['message' => 'You cannot change your own role'], 403);
-            }
-
-            $user->update(['role' => $request->role]);
-            return response()->json(['message' => 'User role updated']);
-        });
-
-        // Full Product & Category Management
+        // Product Management
         Route::post('/products', [ProductController::class, 'store']);
-        Route::put('/products/{id}', [ProductController::class, 'update']);
+        Route::post('/products/{id}', [ProductController::class, 'update']);
         Route::delete('/products/{id}', [ProductController::class, 'destroy']);
-        Route::delete('/product-images/{id}', [ProductController::class, 'destroyImage']);
-        Route::post('/categories', [ProductController::class, 'storeCategory']);
 
-        // Order Management apis
+        // Category Management
+        Route::post('/categories', [CategoryController::class, 'store']);
+        Route::put('/categories/{id}', [CategoryController::class, 'update']);
+        Route::delete('/categories/{id}', [CategoryController::class, 'destroy']);
+
+        // Order Management
         Route::get('/orders', [OrderController::class, 'index']);
-        Route::get('/orders/{id}', [OrderController::class, 'show']);
-        Route::patch('/orders/{id}/status', [OrderController::class, 'updateStatus']);
+        Route::put('/orders/{id}/status', [OrderController::class, 'updateStatus']);
+
+        // User Management
+        Route::get('/users', [UserController::class, 'index']);
+        Route::put('/users/{id}/role', [UserController::class, 'updateRole']);
+        Route::delete('/users/{id}', [UserController::class, 'destroy']);
     });
 });

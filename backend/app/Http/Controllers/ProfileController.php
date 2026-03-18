@@ -3,80 +3,73 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Address;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules\Password;
 
-class ProfileController extends Controller {
-    
-    // Update basic info
-    public function updateProfile(Request $request) {
-        $user = auth()->user();
-        $data = $request->validate([
-            'name' => 'string|max:255',
-            'phone_number' => 'string|unique:users,phone_number,' . $user->id,
+class ProfileController extends Controller
+{
+    /**
+     * Update user profile information
+     */
+    public function updateProfile(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone_number' => 'nullable|string|max:20',
         ]);
 
-        $user->update($data);
-        return response()->json(['message' => 'Profile updated successfully', 'user' => $user]);
+        $user = $request->user();
+        
+        $user->name = $request->name;
+        $user->phone_number = $request->phone_number;
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully',
+            'user' => $user
+        ]);
     }
 
-    // Manage Addresses
-    public function addAddress(Request $request) {
+    /**
+     * Update user password
+     */
+    public function updatePassword(Request $request)
+    {
         $request->validate([
-            'address_line' => 'required|string',
-            'city' => 'required|string',
-            'is_default' => 'boolean'
+            'current_password' => 'required',
+            'new_password' => ['required', 'confirmed', Password::min(8)],
         ]);
 
-        // If setting as default, unset others first
-        if ($request->is_default) {
-            auth()->user()->addresses()->update(['is_default' => false]);
+        $user = $request->user();
+
+        // Verify current password
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'message' => 'Current password is incorrect',
+                'errors' => [
+                    'current_password' => ['The current password is incorrect']
+                ]
+            ], 422);
         }
 
-        $address = auth()->user()->addresses()->create($request->all());
-        return response()->json($address, 201);
-    }
-
-    // Password Reset (Secure Internal)
-    public function updatePassword(Request $request) {
-        $request->validate([
-            'current_password' => 'required|current_password',
-            'new_password' => 'required|min:8|confirmed',
-        ]);
-
-        auth()->user()->update([
-            'password' => Hash::make($request->new_password)
-        ]);
-
-        return response()->json(['message' => 'Password changed successfully']);
-    }
-
-    public function sendPhoneOTP(Request $request) {
-        $user = auth()->user();
-        $otp = rand(100000, 999999);
-        
-        // Store OTP in cache for 10 minutes
-        cache()->put('otp_' . $user->id, $otp, now()->addMinutes(10));
-
-        // For Sri Lankan numbers, ensure the +94 prefix is handled
-        // Example using an SMS Gateway (Log for now)
-        \Log::info("OTP for User {$user->id}: {$otp}");
-        
-        // In production: $smsProvider->send($user->phone_number, "Your Oveena code is: $otp");
-
-        return response()->json(['message' => 'OTP sent to your phone']);
-    }
-
-    public function verifyPhoneOTP(Request $request) {
-        $request->validate(['otp' => 'required|numeric']);
-        $user = auth()->user();
-
-        if ($request->otp == cache()->get('otp_' . $user->id)) {
-            $user->update(['phone_verified_at' => now()]);
-            cache()->forget('otp_' . $user->id);
-            return response()->json(['message' => 'Phone verified successfully']);
+        // Ensure new password is different
+        if (Hash::check($request->new_password, $user->password)) {
+            return response()->json([
+                'message' => 'New password must be different from current password',
+                'errors' => [
+                    'new_password' => ['New password must be different from current password']
+                ]
+            ], 422);
         }
 
-        return response()->json(['message' => 'Invalid or expired OTP'], 422);
+        // Update password
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Password changed successfully'
+        ]);
     }
 }
